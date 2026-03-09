@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vhive.aura</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/the-hive/Desktop/Vhive/.venv/bin/python</string>
+    <string>-m</string>
+    <string>vhive_core.main</string>
+    <string>--daemon</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/the-hive/Desktop/Vhive</string>
+
+  <!-- Restart automatically if it crashes -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Start at login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- stdout/stderr go to log files (in addition to rotating file logger) -->
+  <key>StandardOutPath</key>
+  <string>/Users/the-hive/.vhive/logs/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/the-hive/.vhive/logs/launchd.stderr.log</string>
+
+  <!-- Throttle rapid crash loops: wait 10s before restarting -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Environment variables (add secrets here or use .env file) -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VHIVE_DAEMON</key>
+    <string>1</string>
+    <key>VHIVE_PORT</key>
+    <string>8080</string>
+    <!-- Uncomment and fill if not using .env file:
+    <key>SHOPIFY_SHOP_DOMAIN</key>
+    <string>your-store.myshopify.com</string>
+    <key>SHOPIFY_ACCESS_TOKEN</key>
+    <string>shpat_...</string>
+    -->
+  </dict>
+</dict>
+</plist>

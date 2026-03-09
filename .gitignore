@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment (secrets)
+vhive_core/.env
+
+# Frontend build artifacts
+star_office_ui/vhive-client/node_modules/
+star_office_ui/vhive-client/dist/
+
+# macOS
+.DS_Store
+
+# Runtime data (stays local)
+*.db
+*.log
+*.sqlite
+
+# IDE
+.vscode/

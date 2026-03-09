@@ -1,0 +1,35 @@
+# Vhive - Local Autonomous Agentic Workflow
+# Python 3.11+ (3.11, 3.12, or 3.13 - CrewAI does not support 3.14 yet)
+
+# Orchestration
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+# Local LLM
+langchain-ollama>=0.2.0
+
+# Multi-Agent (requires Python <3.14)
+crewai>=0.11.0
+crewai-tools>=0.11.0
+
+# External APIs
+tweepy>=4.14.0
+requests>=2.31.0
+httpx>=0.27.0
+
+# Shopify - use GraphQL via requests (ShopifyAPI has different API)
+# ShopifyAPI>=12.0.0  # Optional: for REST API
+
+# Environment
+python-dotenv>=1.0.0
+
+# Dynamic Sandboxing (Docker Python SDK)
+docker>=7.0.0
+
+# Star-Office-UI (FastAPI + WebSocket)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Scheduler (24/7 daemon mode)
+apscheduler>=3.10.0
