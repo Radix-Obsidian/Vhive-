@@ -2,11 +2,19 @@
 CrewAI agent and task definitions for Vhive AURA.
 Twitter Agent, Dev Agent, Sales Agent - each uses local Ollama via llm_config.
 Agents receive memory context (daily notes, tacit knowledge) before each run.
+Deploy pipeline: GitHub repo creation → Vercel deployment → Stripe payment link.
 """
 
+import json
+import logging
+import os
+import re
 from typing import Any
 
+import requests
 from crewai import Agent, Crew, Process, Task
+
+log = logging.getLogger(__name__)
 
 from vhive_core.core.llm_config import CODING_LLM, CREATIVE_LLM
 from vhive_core.memory import memory
@@ -51,18 +59,20 @@ def _sales_agent(tools: list = None) -> Agent:
 def _get_tools():
     """Lazy import tools to avoid circular imports and allow tools to be built in Phase 3."""
     try:
+        from vhive_core.tools.github_tool import GitHubRepoTool
         from vhive_core.tools.imessage_tool import iMessageSendTool
         from vhive_core.tools.openhands_tool import OpenHandsExecuteTool
-        from vhive_core.tools.shopify_tool import ShopifyProductTool
         from vhive_core.tools.telegram_tool import TelegramSendTool
         from vhive_core.tools.twitter_tool import TwitterSearchTool, TwitterSendDMTool
+        from vhive_core.tools.vercel_tool import VercelDeployTool
 
         return {
             "twitter_search": TwitterSearchTool(),
             "twitter_dm": TwitterSendDMTool(),
             "imessage": iMessageSendTool(),
             "telegram": TelegramSendTool(),
-            "shopify": ShopifyProductTool(),
+            "github": GitHubRepoTool(),
+            "vercel": VercelDeployTool(),
             "openhands": OpenHandsExecuteTool(),
         }
     except ImportError:
@@ -137,7 +147,14 @@ def run_product_build_crew(state: dict[str, Any]) -> str:
     research = state.get("research_data", "") or "No prior research."
 
     task = Task(
-        description=f"Based on this research: {research}. Write a simple digital product (e.g., Python script or template) and execute it in the sandbox to validate. Return the code and execution output.",
+        description=(
+            f"Based on this research: {research}. "
+            "Write a practical digital product that DOES NOT require Twitter/social media API credentials. "
+            "Good examples: a Python productivity script, a data analysis template, a compliance checklist generator, "
+            "a markdown report template, or a simple automation tool. "
+            "The product should be self-contained and actually runnable. Execute it in the sandbox to validate. "
+            "Return the working code and execution output."
+        ),
         agent=agent,
         expected_output="Working code and sandbox execution output.",
     )
@@ -211,12 +228,18 @@ def run_outreach_crew(state: dict[str, Any]) -> str:
     task = Task(
         description=(
             f"Research: {research[:300]}. Deployment: {deployment[:200]}. "
-            "Draft and send iMessage and Telegram DMs to drive cold traffic to "
-            "viperbyproof.com, complybyproof.com, itsvoco.com. Personalize based on research."
+            "Your job: send an operator summary via Telegram, then attempt iMessage outreach ONLY if you have a real contact number.\n\n"
+            "STEP 1 — REQUIRED: Use TelegramSendTool (no chat_id needed, uses default) to send a run summary: "
+            "what was researched, what product was built, deployment status, and your outreach plan.\n\n"
+            "STEP 2 — OPTIONAL iMessage: ONLY send iMessage if you have been given a real verified phone number. "
+            "NEVER invent, guess, or use placeholder phone numbers like +12025551234 or any 555-xxxx number. "
+            "If no real phone numbers are provided, skip iMessage entirely.\n\n"
+            "STEP 3 — Twitter DM: Currently unavailable (API credits depleted). Skip it.\n\n"
+            "Products to promote: viperbyproof.com (privacy compliance), complybyproof.com (compliance automation), itsvoco.com (voice AI)."
             f"{tacit_block}"
         ),
         agent=agent,
-        expected_output="Confirmation of sent messages and summary of outreach.",
+        expected_output="Confirmation of Telegram message sent, and summary of all outreach actions taken.",
     )
 
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=True, stream=True)
