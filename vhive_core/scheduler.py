@@ -1,7 +1,7 @@
 """
 AURA Scheduler — runs workflows on a configurable interval using APScheduler.
 Integrates with the FastAPI lifespan and prevents overlapping runs.
-Also syncs Shopify revenue data on a regular interval.
+Also syncs Stripe revenue data on a regular interval.
 """
 
 import logging
@@ -62,43 +62,84 @@ def run_workflow_with_lock(trigger_source: str = "manual") -> dict:
 
 
 def sync_revenue() -> None:
-    """Pull recent orders from Shopify, match to known products, record revenue events.
+    """Pull recent Stripe charges, match to known products, record revenue events.
 
-    Safe to call repeatedly — deduplicates on order GID.
+    Safe to call repeatedly — deduplicates on Stripe payment_intent ID.
+    Requires STRIPE_SECRET_KEY in env. No-ops silently if key is absent.
     """
+    import os
+
+    import requests
+
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret_key:
+        return  # Stripe not configured — skip silently
+
     try:
         from vhive_core.db import db
-        from vhive_core.tools.shopify_tool import fetch_orders
 
-        orders = fetch_orders(limit=50)
+        headers = {"Authorization": f"Bearer {secret_key}"}
+
+        # Fetch the last 50 successful payment intents
+        resp = requests.get(
+            "https://api.stripe.com/v1/payment_intents",
+            params={"limit": "50", "expand[]": "data.charges"},
+            headers=headers,
+            timeout=15,
+        )
+        if not resp.ok:
+            log.warning("Stripe revenue sync: API error %s", resp.status_code)
+            return
+
+        intents = resp.json().get("data", [])
         new_events = 0
-        for order in orders:
-            if db.revenue_event_exists(order["id"]):
+
+        for intent in intents:
+            if intent.get("status") != "succeeded":
+                continue
+
+            intent_id = intent["id"]
+            if db.revenue_event_exists(intent_id):
                 continue  # Already recorded
 
-            # Match line items to our tracked products
-            for li in order.get("line_items", []):
-                product_gid = li.get("product_id", "")
-                if not product_gid:
-                    continue
-                product = db.get_product_by_shopify_gid(product_gid)
-                if not product:
-                    continue  # Not one of ours
+            amount_cents = intent.get("amount", 0)
+            currency = intent.get("currency", "usd").upper()
+            customer_email = intent.get("receipt_email") or ""
 
-                amount = li["price_cents"] * li.get("quantity", 1)
-                db.add_revenue_event(
-                    product_id=product["id"],
-                    amount_cents=amount,
-                    order_shopify_gid=order["id"],
-                    currency=order.get("currency", "USD"),
-                    customer_email=order.get("customer_email", ""),
-                )
-                new_events += 1
+            # Match to a product via metadata.product_name → vercel_url lookup
+            product_name = (intent.get("metadata") or {}).get("product_name", "")
+            product = None
+            if product_name:
+                # Try matching by vercel_url pattern or title
+                products = db.get_products(limit=100)
+                for p in products:
+                    if product_name in (p.get("title") or "").lower() or product_name in (p.get("vercel_url") or ""):
+                        product = p
+                        break
+
+            if not product:
+                # No match — record against the most recently deployed product as fallback
+                products = db.get_products(limit=1)
+                if products:
+                    product = products[0]
+
+            if not product:
+                continue
+
+            db.add_revenue_event(
+                product_id=product["id"],
+                amount_cents=amount_cents,
+                order_shopify_gid=intent_id,  # reuse column as generic order ID
+                currency=currency,
+                customer_email=customer_email,
+                source="stripe",
+            )
+            new_events += 1
 
         if new_events:
-            log.info("Revenue sync: recorded %d new events", new_events)
+            log.info("Stripe revenue sync: recorded %d new events", new_events)
     except Exception as e:
-        log.warning("Revenue sync failed: %s", e)
+        log.warning("Stripe revenue sync failed: %s", e)
 
 
 def create_scheduler(schedule_hours: float | None = None) -> AsyncIOScheduler:

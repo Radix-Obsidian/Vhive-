@@ -24,3 +24,7 @@ star_office_ui/vhive-client/dist/
 
 # IDE
 .vscode/
+node_modules/
+frontend/dist/
+frontend/node_modules/
+star_office_ui/

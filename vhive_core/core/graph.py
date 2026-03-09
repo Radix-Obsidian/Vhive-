@@ -82,7 +82,8 @@ def _create_graph():
 
     # --- Nodes ---
 
-    from vhive_core.tools.shopify_tool import extract_product_title, extract_shopify_gid
+    from vhive_core.tools.github_tool import extract_github_url
+    from vhive_core.tools.vercel_tool import extract_vercel_url
 
     research_node = _logged_node("research", run_research_crew, "research_data")
     product_build_node = _logged_node("product_build", run_product_build_crew, "product_code")
@@ -93,13 +94,17 @@ def _create_graph():
         result = _raw_deploy_node(state)
         deploy_status = result.get("deployment_status", "")
         if deploy_status and not result.get("errors"):
-            gid = extract_shopify_gid(str(deploy_status))
-            title = extract_product_title(str(deploy_status)) or "Untitled"
-            if gid:
+            status_str = str(deploy_status)
+            github_url = extract_github_url(status_str) or ""
+            vercel_url = extract_vercel_url(status_str) or ""
+            # Derive product title from GitHub URL slug or fallback
+            title = github_url.rstrip("/").split("/")[-1] if github_url else "AURA Product"
+            if github_url or vercel_url:
                 db.add_product(
                     title=title,
-                    shopify_gid=gid,
                     run_id=state.get("run_id", ""),
+                    github_url=github_url,
+                    vercel_url=vercel_url,
                 )
         return result
 

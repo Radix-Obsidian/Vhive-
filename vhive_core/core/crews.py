@@ -33,11 +33,14 @@ def _twitter_agent(tools: list = None) -> Agent:
 
 
 def _dev_agent(tools: list = None) -> Agent:
-    """Writes code for digital products. Uses coding LLM. Has OpenHands for execution."""
+    """Builds digital product landing pages. Uses coding LLM. Has OpenHands for execution."""
     return Agent(
-        role="Python Developer",
-        goal="Write clean, working code for digital products (e.g., templates, scripts) and validate via sandbox",
-        backstory="Senior developer who ships fast and tests in isolated environments.",
+        role="Full-Stack Developer",
+        goal=(
+            "Build complete, deployable React+Vite landing pages for digital products. "
+            "Each product must include a Stripe payment integration and be ready to push to GitHub and deploy on Vercel."
+        ),
+        backstory="Senior developer who ships polished landing pages fast and validates them before deploy.",
         llm=CODING_LLM,
         tools=tools or [],
         verbose=True,
@@ -148,15 +151,27 @@ def run_product_build_crew(state: dict[str, Any]) -> str:
 
     task = Task(
         description=(
-            f"Based on this research: {research}. "
-            "Write a practical digital product that DOES NOT require Twitter/social media API credentials. "
-            "Good examples: a Python productivity script, a data analysis template, a compliance checklist generator, "
-            "a markdown report template, or a simple automation tool. "
-            "The product should be self-contained and actually runnable. Execute it in the sandbox to validate. "
-            "Return the working code and execution output."
+            f"Based on this research: {research}.\n\n"
+            "Build a digital product landing page as a Vite+React app. "
+            "Return ONLY a valid JSON object — no prose before or after. "
+            "The JSON must have exactly these keys:\n"
+            "  - product_name: kebab-case slug (e.g. 'ai-seo-audit-tool')\n"
+            "  - price_cents: integer price in cents (e.g. 2900 for $29)\n"
+            "  - files: object mapping file paths to file content strings\n\n"
+            "Required files:\n"
+            "  - index.html (Vite entry point)\n"
+            "  - package.json (react, react-dom, vite, @vitejs/plugin-react, tailwindcss, autoprefixer, postcss)\n"
+            "  - vite.config.ts\n"
+            "  - tailwind.config.js\n"
+            "  - postcss.config.js\n"
+            "  - src/main.tsx\n"
+            "  - src/App.tsx (hero, pain points, CTA button using window.location.href = '__STRIPE_URL__')\n"
+            "  - src/components/PricingCard.tsx\n\n"
+            "The buy button must use: window.location.href = '__STRIPE_URL__' exactly.\n"
+            "Return ONLY the JSON — no markdown, no backticks, no explanation."
         ),
         agent=agent,
-        expected_output="Working code and sandbox execution output.",
+        expected_output="A valid JSON object with product_name, price_cents, and files keys.",
     )
 
     crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=True, stream=True)
@@ -178,25 +193,136 @@ def run_product_build_crew(state: dict[str, Any]) -> str:
     return str(result.raw) if hasattr(result, "raw") else str(result)
 
 
-def run_deploy_crew(state: dict[str, Any]) -> str:
-    """State 3: Deploy via Shopify tool."""
-    tools = _get_tools()
-    if "shopify" not in tools:
-        return "Shopify tool not available - deploy skipped."
+def _parse_product_bundle(product_code: str) -> dict | None:
+    """Try to extract the JSON product bundle from LLM output. Returns None on failure."""
+    # Direct parse
+    try:
+        data = json.loads(product_code.strip())
+        if isinstance(data, dict) and "product_name" in data and "files" in data:
+            return data
+    except json.JSONDecodeError:
+        pass
 
-    shopify_tool = tools["shopify"]
-    product_code = state.get("product_code", "")
+    # Extract JSON block from mixed text (LLM sometimes wraps in prose)
+    match = re.search(r"\{[\s\S]*\"product_name\"[\s\S]*\"files\"[\s\S]*\}", product_code)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, dict) and "product_name" in data and "files" in data:
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _create_stripe_payment_link(product_name: str, price_cents: int) -> str | None:
+    """Create a Stripe Product + Price + Payment Link. Returns the payment link URL or None."""
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret_key:
+        return None
+
+    headers = {"Authorization": f"Bearer {secret_key}"}
+    base = "https://api.stripe.com/v1"
 
     try:
-        result = shopify_tool.run(
-            title="AURA Digital Product",
-            description=product_code[:500] if product_code else "Digital product from AURA",
-            product_type="digital",
+        # 1. Create Stripe Product
+        product_resp = requests.post(
+            f"{base}/products",
+            data={"name": product_name.replace("-", " ").title()},
+            headers=headers,
+            timeout=15,
         )
-        return str(result)
+        product_resp.raise_for_status()
+        stripe_product_id = product_resp.json()["id"]
+
+        # 2. Create Price
+        price_resp = requests.post(
+            f"{base}/prices",
+            data={
+                "product": stripe_product_id,
+                "unit_amount": str(price_cents),
+                "currency": "usd",
+            },
+            headers=headers,
+            timeout=15,
+        )
+        price_resp.raise_for_status()
+        stripe_price_id = price_resp.json()["id"]
+
+        # 3. Create Payment Link
+        link_resp = requests.post(
+            f"{base}/payment_links",
+            data={
+                "line_items[0][price]": stripe_price_id,
+                "line_items[0][quantity]": "1",
+                f"metadata[product_name]": product_name,
+            },
+            headers=headers,
+            timeout=15,
+        )
+        link_resp.raise_for_status()
+        return link_resp.json()["url"]
     except Exception as e:
-        # Deploy failure (e.g. auth error) is non-fatal — log and continue to outreach
-        return f"Deploy skipped: {e}"
+        log.warning("Stripe payment link creation failed: %s", e)
+        return None
+
+
+def run_deploy_crew(state: dict[str, Any]) -> str:
+    """State 3: Deploy via GitHub + Vercel pipeline with Stripe payment link."""
+    tools = _get_tools()
+    product_code = state.get("product_code", "")
+
+    # Parse the JSON bundle from the coding LLM output
+    bundle = _parse_product_bundle(product_code)
+    if not bundle:
+        log.warning("product_code is not a valid JSON bundle — deploy skipped")
+        return "Deploy skipped: product_code is not a valid JSON bundle"
+
+    product_name = bundle.get("product_name", "aura-product")
+    price_cents = bundle.get("price_cents", 0)
+    files: dict[str, str] = bundle.get("files", {})
+
+    if not files:
+        return "Deploy skipped: product bundle contains no files"
+
+    # Inject Stripe payment link URL (or placeholder if STRIPE_SECRET_KEY not set)
+    stripe_url = _create_stripe_payment_link(product_name, price_cents)
+    if stripe_url:
+        _broadcast_agent("thought", "dev_product_build", {"content": f"Stripe payment link: {stripe_url}"})
+    else:
+        stripe_url = "https://buy.stripe.com/placeholder"
+        log.info("STRIPE_SECRET_KEY not set — using placeholder URL")
+
+    files = {path: content.replace("__STRIPE_URL__", stripe_url) for path, content in files.items()}
+
+    # Push to GitHub
+    github_tool = tools.get("github")
+    if not github_tool:
+        return "Deploy skipped: GitHubRepoTool not available"
+
+    github_result = github_tool.run(
+        product_name=product_name,
+        files=files,
+        description=f"AURA digital product: {product_name}",
+    )
+    _broadcast_agent("thought", "dev_product_build", {"content": github_result})
+
+    if github_result.startswith("Error"):
+        return f"GitHub deploy failed: {github_result}"
+
+    # Deploy to Vercel
+    from vhive_core.tools.github_tool import extract_github_repo
+
+    repo_name = extract_github_repo(github_result)
+    vercel_tool = tools.get("vercel")
+    if not vercel_tool or not repo_name:
+        return f"{github_result} | Vercel deploy skipped: tool or repo name unavailable"
+
+    vercel_result = vercel_tool.run(repo_name=repo_name, project_name=product_name)
+    _broadcast_agent("thought", "dev_product_build", {"content": vercel_result})
+
+    return f"{github_result} | {vercel_result}"
 
 
 def run_outreach_crew(state: dict[str, Any]) -> str:
@@ -231,9 +357,9 @@ def run_outreach_crew(state: dict[str, Any]) -> str:
             "Your job: send an operator summary via Telegram, then attempt iMessage outreach ONLY if you have a real contact number.\n\n"
             "STEP 1 — REQUIRED: Use TelegramSendTool (no chat_id needed, uses default) to send a run summary: "
             "what was researched, what product was built, deployment status, and your outreach plan.\n\n"
-            "STEP 2 — OPTIONAL iMessage: ONLY send iMessage if you have been given a real verified phone number. "
-            "NEVER invent, guess, or use placeholder phone numbers like +12025551234 or any 555-xxxx number. "
-            "If no real phone numbers are provided, skip iMessage entirely.\n\n"
+            "STEP 2 — iMessage to operator: Send a brief run summary via iMessage to +12346505567. "
+            "This is the operator's verified iPhone number. Include: what was built, deploy status, and next steps. "
+            "NEVER use any other phone number. NEVER invent or guess numbers.\n\n"
             "STEP 3 — Twitter DM: Currently unavailable (API credits depleted). Skip it.\n\n"
             "Products to promote: viperbyproof.com (privacy compliance), complybyproof.com (compliance automation), itsvoco.com (voice AI)."
             f"{tacit_block}"

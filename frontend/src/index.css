@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Star-Office theme: retro-futuristic, dark + amber/gold */
+@theme {
+  --color-star-bg: #0a0a0c;
+  --color-star-darker: #060608;
+  --color-star-dark: #0d0d10;
+  --color-star-fg: #e8e4dc;
+  --color-star-muted: #8a8578;
+  --color-star-amber: #e6b422;
+  --color-star-green: #7cb87c;
+  --color-star-red: #c94c4c;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-star-bg);
+  color: var(--color-star-fg);
+  font-family: var(--font-mono);
+}
+
+/* Subtle scanline overlay (optional) */
+.star-office-app::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  z-index: 9999;
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+}
+
+.thought-stream {
+  max-height: 100%;
+}
+
+.star-header {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(230, 180, 34, 0.12);
+}

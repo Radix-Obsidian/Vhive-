@@ -90,6 +90,17 @@ class VhiveDB:
         """)
         self.conn.commit()
 
+        # Additive migrations — safe to run on existing DBs
+        for col, typedef in [
+            ("github_url", "TEXT DEFAULT ''"),
+            ("vercel_url", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE products ADD COLUMN {col} {typedef}")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
     # ── Run lifecycle ──────────────────────────────────────────
 
     def start_run(self, trigger_source: str = "manual") -> str:
@@ -162,15 +173,22 @@ class VhiveDB:
         run_id: str = "",
         product_type: str = "digital",
         price_cents: int = 0,
+        github_url: str = "",
+        vercel_url: str = "",
     ) -> str:
         """Register a deployed product. Returns the product_id."""
         product_id = uuid.uuid4().hex[:12]
         self.conn.execute(
-            "INSERT INTO products (id, run_id, shopify_gid, title, product_type, price_cents, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
-            (product_id, run_id, shopify_gid, title, product_type, price_cents, _now()),
+            "INSERT INTO products (id, run_id, shopify_gid, title, product_type, price_cents, status, github_url, vercel_url, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+            (product_id, run_id, shopify_gid, title, product_type, price_cents, github_url, vercel_url, _now()),
         )
         self.conn.commit()
         return product_id
+
+    def get_product_by_vercel_url(self, vercel_url: str) -> dict | None:
+        """Look up a product by its Vercel deployment URL."""
+        row = self.conn.execute("SELECT * FROM products WHERE vercel_url = ?", (vercel_url,)).fetchone()
+        return dict(row) if row else None
 
     def get_products(self, limit: int = 50, offset: int = 0) -> list[dict]:
         """Get products newest first, with aggregated revenue."""
